@@ -1,3 +1,14 @@
+K8s API 流量8查看器：mizu
+
+Kubernetes 的 API 流量查看器，可以查看微服务之间的所有 API 通信情况，方便你调试和排查故障。特性：
+
+    简单又强大的 CLI
+    实时监控网络流量，支持 HTTP/1.1 在内的多种协议
+    免部署安装
+    丰富的过滤机制
+    
+ (src:HelloGitHub data:220110)
+
 ![Mizu: The API Traffic Viewer for Kubernetes](assets/mizu-logo.svg)
 
 # The API Traffic Viewer for Kubernetes
