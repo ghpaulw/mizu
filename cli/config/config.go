@@ -9,11 +9,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/up9inc/mizu/tap/api"
-	"k8s.io/apimachinery/pkg/util/json"
-
+	"github.com/up9inc/mizu/logger"
 	"github.com/up9inc/mizu/shared"
-	"github.com/up9inc/mizu/shared/logger"
 
 	"github.com/creasty/defaults"
 	"github.com/spf13/cobra"
@@ -82,27 +79,6 @@ func WriteConfig(config *ConfigStruct) error {
 
 	data := []byte(template)
 	if err := ioutil.WriteFile(Config.ConfigFilePath, data, 0644); err != nil {
-		return fmt.Errorf("failed writing config, err: %v", err)
-	}
-
-	return nil
-}
-
-type updateConfigStruct func(*ConfigStruct)
-
-func UpdateConfig(updateConfigStruct updateConfigStruct) error {
-	configFile, err := GetConfigWithDefaults()
-	if err != nil {
-		return fmt.Errorf("failed getting config with defaults, err: %v", err)
-	}
-
-	if err := loadConfigFile(Config.ConfigFilePath, configFile); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed getting config file, err: %v", err)
-	}
-
-	updateConfigStruct(configFile)
-
-	if err := WriteConfig(configFile); err != nil {
 		return fmt.Errorf("failed writing config, err: %v", err)
 	}
 
@@ -370,39 +346,4 @@ func setZeroForReadonlyFields(currentElem reflect.Value) {
 			currentFieldByName.Set(reflect.Zero(currentField.Type))
 		}
 	}
-}
-
-func GetSerializedMizuAgentConfig(targetNamespaces []string, mizuApiFilteringOptions *api.TrafficFilteringOptions) (string, error) {
-	mizuConfig, err := getMizuAgentConfig(targetNamespaces, mizuApiFilteringOptions)
-	if err != nil {
-		return "", err
-	}
-	serializedConfig, err := json.Marshal(mizuConfig)
-	if err != nil {
-		return "", err
-	}
-	return string(serializedConfig), nil
-}
-
-func getMizuAgentConfig(targetNamespaces []string, mizuApiFilteringOptions *api.TrafficFilteringOptions) (*shared.MizuAgentConfig, error) {
-	serializableRegex, err := api.CompileRegexToSerializableRegexp(Config.Tap.PodRegexStr)
-	if err != nil {
-		return nil, err
-	}
-	config := shared.MizuAgentConfig{
-		TapTargetRegex:          *serializableRegex,
-		MaxDBSizeBytes:          Config.Tap.MaxEntriesDBSizeBytes(),
-		DaemonMode:              Config.Tap.DaemonMode,
-		TargetNamespaces:        targetNamespaces,
-		AgentImage:              Config.AgentImage,
-		PullPolicy:              Config.ImagePullPolicyStr,
-		LogLevel:                Config.LogLevel(),
-		IgnoredUserAgents:       Config.Tap.IgnoredUserAgents,
-		TapperResources:         Config.Tap.TapperResources,
-		MizuResourcesNamespace:  Config.MizuResourcesNamespace,
-		MizuApiFilteringOptions: *mizuApiFilteringOptions,
-		AgentDatabasePath:       shared.DataDirPath,
-		Istio:                   Config.Tap.Istio,
-	}
-	return &config, nil
 }

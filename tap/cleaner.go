@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/google/gopacket/reassembly"
-	"github.com/up9inc/mizu/shared/logger"
+	"github.com/up9inc/mizu/logger"
 	"github.com/up9inc/mizu/tap/api"
 )
 
@@ -22,6 +22,7 @@ type Cleaner struct {
 	connectionTimeout time.Duration
 	stats             CleanerStats
 	statsMutex        sync.Mutex
+	streamsMap        api.TcpStreamMap
 }
 
 func (cl *Cleaner) clean() {
@@ -32,10 +33,17 @@ func (cl *Cleaner) clean() {
 	flushed, closed := cl.assembler.FlushCloseOlderThan(startCleanTime.Add(-cl.connectionTimeout))
 	cl.assemblerMutex.Unlock()
 
-	for _, extension := range extensions {
-		deleted := deleteOlderThan(extension.MatcherMap, startCleanTime.Add(-cl.connectionTimeout))
-		cl.stats.deleted += deleted
-	}
+	cl.streamsMap.Range(func(k, v interface{}) bool {
+		reqResMatchers := v.(api.TcpStream).GetReqResMatchers()
+		for _, reqResMatcher := range reqResMatchers {
+			if reqResMatcher == nil {
+				continue
+			}
+			deleted := deleteOlderThan(reqResMatcher.GetMap(), startCleanTime.Add(-cl.connectionTimeout))
+			cl.stats.deleted += deleted
+		}
+		return true
+	})
 
 	cl.statsMutex.Lock()
 	logger.Log.Debugf("Assembler Stats after cleaning %s", cl.assembler.Dump())

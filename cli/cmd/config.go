@@ -9,7 +9,7 @@ import (
 	"github.com/up9inc/mizu/cli/config/configStructs"
 	"github.com/up9inc/mizu/cli/telemetry"
 	"github.com/up9inc/mizu/cli/uiUtils"
-	"github.com/up9inc/mizu/shared/logger"
+	"github.com/up9inc/mizu/logger"
 )
 
 var configCmd = &cobra.Command{
@@ -50,7 +50,9 @@ func init() {
 	rootCmd.AddCommand(configCmd)
 
 	defaultConfig := config.ConfigStruct{}
-	defaults.Set(&defaultConfig)
+	if err := defaults.Set(&defaultConfig); err != nil {
+		logger.Log.Debug(err)
+	}
 
 	configCmd.Flags().BoolP(configStructs.RegenerateConfigName, "r", defaultConfig.Config.Regenerate, fmt.Sprintf("Regenerate the config file with default values to path %s or to chosen path using --%s", defaultConfig.ConfigFilePath, config.ConfigFilePathCommandName))
 }

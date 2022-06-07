@@ -1,55 +1,54 @@
 package configStructs
 
 import (
-	"errors"
 	"fmt"
-	"github.com/up9inc/mizu/cli/uiUtils"
-	"github.com/up9inc/mizu/shared/logger"
+	"io/fs"
+	"io/ioutil"
+	"os"
 	"regexp"
 
+	"github.com/up9inc/mizu/cli/uiUtils"
 	"github.com/up9inc/mizu/shared"
 
+	"github.com/up9inc/mizu/logger"
 	"github.com/up9inc/mizu/shared/units"
 )
 
 const (
 	GuiPortTapName                = "gui-port"
 	NamespacesTapName             = "namespaces"
-	AnalysisTapName               = "analysis"
 	AllNamespacesTapName          = "all-namespaces"
 	PlainTextFilterRegexesTapName = "regex-masking"
-	DisableRedactionTapName       = "no-redact"
+	EnableRedactionTapName        = "redact"
 	HumanMaxEntriesDBSizeTapName  = "max-entries-db-size"
+	InsertionFilterName           = "insertion-filter"
 	DryRunTapName                 = "dry-run"
-	WorkspaceTapName              = "workspace"
 	EnforcePolicyFile             = "traffic-validation-file"
 	ContractFile                  = "contract"
-	DaemonModeTapName             = "daemon"
-	IstioName                     = "istio"
+	ServiceMeshName               = "service-mesh"
+	TlsName                       = "tls"
+	ProfilerName                  = "profiler"
 )
 
 type TapConfig struct {
-	UploadIntervalSec       int              `yaml:"upload-interval" default:"10"`
-	PodRegexStr             string           `yaml:"regex" default:".*"`
-	GuiPort                 uint16           `yaml:"gui-port" default:"8899"`
-	ProxyHost               string           `yaml:"proxy-host" default:"127.0.0.1"`
-	Namespaces              []string         `yaml:"namespaces"`
-	Analysis                bool             `yaml:"analysis" default:"false"`
-	AllNamespaces           bool             `yaml:"all-namespaces" default:"false"`
-	PlainTextFilterRegexes  []string         `yaml:"regex-masking"`
-	IgnoredUserAgents       []string         `yaml:"ignored-user-agents"`
-	DisableRedaction        bool             `yaml:"no-redact" default:"false"`
-	HumanMaxEntriesDBSize   string           `yaml:"max-entries-db-size" default:"200MB"`
-	DryRun                  bool             `yaml:"dry-run" default:"false"`
-	Workspace               string           `yaml:"workspace"`
-	EnforcePolicyFile       string           `yaml:"traffic-validation-file"`
-	ContractFile            string           `yaml:"contract"`
-	AskUploadConfirmation   bool             `yaml:"ask-upload-confirmation" default:"true"`
-	ApiServerResources      shared.Resources `yaml:"api-server-resources"`
-	TapperResources         shared.Resources `yaml:"tapper-resources"`
-	DaemonMode              bool             `yaml:"daemon" default:"false"`
-	NoPersistentVolumeClaim bool             `yaml:"no-persistent-volume-claim" default:"false"`
-	Istio                   bool             `yaml:"istio" default:"false"`
+	PodRegexStr            string           `yaml:"regex" default:".*"`
+	GuiPort                uint16           `yaml:"gui-port" default:"8899"`
+	ProxyHost              string           `yaml:"proxy-host" default:"127.0.0.1"`
+	Namespaces             []string         `yaml:"namespaces"`
+	AllNamespaces          bool             `yaml:"all-namespaces" default:"false"`
+	PlainTextFilterRegexes []string         `yaml:"regex-masking"`
+	IgnoredUserAgents      []string         `yaml:"ignored-user-agents"`
+	EnableRedaction        bool             `yaml:"redact" default:"false"`
+	HumanMaxEntriesDBSize  string           `yaml:"max-entries-db-size" default:"200MB"`
+	InsertionFilter        string           `yaml:"insertion-filter" default:""`
+	DryRun                 bool             `yaml:"dry-run" default:"false"`
+	EnforcePolicyFile      string           `yaml:"traffic-validation-file"`
+	ContractFile           string           `yaml:"contract"`
+	ApiServerResources     shared.Resources `yaml:"api-server-resources"`
+	TapperResources        shared.Resources `yaml:"tapper-resources"`
+	ServiceMesh            bool             `yaml:"service-mesh" default:"false"`
+	Tls                    bool             `yaml:"tls" default:"false"`
+	Profiler               bool             `yaml:"profiler" default:"false"`
 }
 
 func (config *TapConfig) PodRegex() *regexp.Regexp {
@@ -62,30 +61,30 @@ func (config *TapConfig) MaxEntriesDBSizeBytes() int64 {
 	return maxEntriesDBSizeBytes
 }
 
+func (config *TapConfig) GetInsertionFilter() string {
+	insertionFilter := config.InsertionFilter
+	if fs.ValidPath(insertionFilter) {
+		if _, err := os.Stat(insertionFilter); err == nil {
+			b, err := ioutil.ReadFile(insertionFilter)
+			if err != nil {
+				logger.Log.Warningf(uiUtils.Warning, fmt.Sprintf("Couldn't read the file on path: %s, err: %v", insertionFilter, err))
+			} else {
+				insertionFilter = string(b)
+			}
+		}
+	}
+	return insertionFilter
+}
+
 func (config *TapConfig) Validate() error {
 	_, compileErr := regexp.Compile(config.PodRegexStr)
 	if compileErr != nil {
-		return errors.New(fmt.Sprintf("%s is not a valid regex %s", config.PodRegexStr, compileErr))
+		return fmt.Errorf("%s is not a valid regex %s", config.PodRegexStr, compileErr)
 	}
 
 	_, parseHumanDataSizeErr := units.HumanReadableToBytes(config.HumanMaxEntriesDBSize)
 	if parseHumanDataSizeErr != nil {
-		return errors.New(fmt.Sprintf("Could not parse --%s value %s", HumanMaxEntriesDBSizeTapName, config.HumanMaxEntriesDBSize))
-	}
-
-	if config.Workspace != "" {
-		workspaceRegex, _ := regexp.Compile("[A-Za-z0-9][-A-Za-z0-9_.]*[A-Za-z0-9]+$")
-		if len(config.Workspace) > 63 || !workspaceRegex.MatchString(config.Workspace) {
-			return errors.New("invalid workspace name")
-		}
-	}
-
-	if config.Analysis && config.Workspace != "" {
-		return errors.New(fmt.Sprintf("Can't run with both --%s and --%s flags", AnalysisTapName, WorkspaceTapName))
-	}
-
-	if config.NoPersistentVolumeClaim && !config.DaemonMode {
-		logger.Log.Warningf(uiUtils.Warning, fmt.Sprintf("the --set tap.no-persistent-volume-claim=true flag has no effect without the --%s flag, the claim will not be created anyway.", DaemonModeTapName))
+		return fmt.Errorf("Could not parse --%s value %s", HumanMaxEntriesDBSizeTapName, config.HumanMaxEntriesDBSize)
 	}
 
 	return nil

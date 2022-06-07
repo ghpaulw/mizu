@@ -2,26 +2,25 @@ package models
 
 import (
 	"encoding/json"
-	"mizuserver/pkg/rules"
 
+	"github.com/up9inc/mizu/agent/pkg/har"
+	"github.com/up9inc/mizu/agent/pkg/rules"
 	tapApi "github.com/up9inc/mizu/tap/api"
 
-	"github.com/google/martian/har"
 	basenine "github.com/up9inc/basenine/client/go"
 	"github.com/up9inc/mizu/shared"
-	"github.com/up9inc/mizu/tap"
 )
 
-func GetEntry(r *tapApi.MizuEntry, v tapApi.DataUnmarshaler) error {
-	return v.UnmarshalData(r)
-}
-
 type EntriesRequest struct {
-	LeftOff   int    `form:"leftOff" validate:"required,min=-1"`
+	LeftOff   string `form:"leftOff" validate:"required"`
 	Direction int    `form:"direction" validate:"required,oneof='1' '-1'"`
 	Query     string `form:"query"`
 	Limit     int    `form:"limit" validate:"required,min=1"`
 	TimeoutMs int    `form:"timeoutMs" validate:"min=1"`
+}
+
+type SingleEntryRequest struct {
+	Query string `form:"query"`
 }
 
 type EntriesResponse struct {
@@ -31,22 +30,17 @@ type EntriesResponse struct {
 
 type WebSocketEntryMessage struct {
 	*shared.WebSocketMessageMetadata
-	Data map[string]interface{} `json:"data,omitempty"`
+	Data *tapApi.BaseEntry `json:"data,omitempty"`
+}
+
+type WebSocketFullEntryMessage struct {
+	*shared.WebSocketMessageMetadata
+	Data *tapApi.Entry `json:"data,omitempty"`
 }
 
 type WebSocketTappedEntryMessage struct {
 	*shared.WebSocketMessageMetadata
 	Data *tapApi.OutputChannelItem
-}
-
-type WebsocketOutboundLinkMessage struct {
-	*shared.WebSocketMessageMetadata
-	Data *tap.OutboundLink
-}
-
-type AuthStatus struct {
-	Email string `json:"email"`
-	Model string `json:"model"`
 }
 
 type ToastMessage struct {
@@ -70,7 +64,7 @@ type WebSocketStartTimeMessage struct {
 	Data int64 `json:"data"`
 }
 
-func CreateBaseEntryWebSocketMessage(base map[string]interface{}) ([]byte, error) {
+func CreateBaseEntryWebSocketMessage(base *tapApi.BaseEntry) ([]byte, error) {
 	message := &WebSocketEntryMessage{
 		WebSocketMessageMetadata: &shared.WebSocketMessageMetadata{
 			MessageType: shared.WebSocketMessageTypeEntry,
@@ -80,20 +74,20 @@ func CreateBaseEntryWebSocketMessage(base map[string]interface{}) ([]byte, error
 	return json.Marshal(message)
 }
 
-func CreateWebsocketTappedEntryMessage(base *tapApi.OutputChannelItem) ([]byte, error) {
-	message := &WebSocketTappedEntryMessage{
+func CreateFullEntryWebSocketMessage(entry *tapApi.Entry) ([]byte, error) {
+	message := &WebSocketFullEntryMessage{
 		WebSocketMessageMetadata: &shared.WebSocketMessageMetadata{
-			MessageType: shared.WebSocketMessageTypeTappedEntry,
+			MessageType: shared.WebSocketMessageTypeFullEntry,
 		},
-		Data: base,
+		Data: entry,
 	}
 	return json.Marshal(message)
 }
 
-func CreateWebsocketOutboundLinkMessage(base *tap.OutboundLink) ([]byte, error) {
-	message := &WebsocketOutboundLinkMessage{
+func CreateWebsocketTappedEntryMessage(base *tapApi.OutputChannelItem) ([]byte, error) {
+	message := &WebSocketTappedEntryMessage{
 		WebSocketMessageMetadata: &shared.WebSocketMessageMetadata{
-			MessageType: shared.WebsocketMessageTypeOutboundLink,
+			MessageType: shared.WebSocketMessageTypeTappedEntry,
 		},
 		Data: base,
 	}

@@ -1,9 +1,8 @@
 package routes
 
 import (
-	"mizuserver/pkg/controllers"
-
 	"github.com/gin-gonic/gin"
+	"github.com/up9inc/mizu/agent/pkg/controllers"
 )
 
 func QueryRoutes(ginApp *gin.Engine) {

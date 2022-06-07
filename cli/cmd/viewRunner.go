@@ -5,13 +5,14 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/up9inc/mizu/cli/utils"
+
 	"github.com/up9inc/mizu/cli/apiserver"
 	"github.com/up9inc/mizu/cli/config"
 	"github.com/up9inc/mizu/cli/mizu/fsUtils"
-	"github.com/up9inc/mizu/cli/mizu/version"
 	"github.com/up9inc/mizu/cli/uiUtils"
+	"github.com/up9inc/mizu/logger"
 	"github.com/up9inc/mizu/shared/kubernetes"
-	"github.com/up9inc/mizu/shared/logger"
 )
 
 func runMizuView() {
@@ -26,7 +27,7 @@ func runMizuView() {
 	url := config.Config.View.Url
 
 	if url == "" {
-		exists, err := kubernetesProvider.DoesServicesExist(ctx, config.Config.MizuResourcesNamespace, kubernetes.ApiServerPodName)
+		exists, err := kubernetesProvider.DoesServiceExist(ctx, config.Config.MizuResourcesNamespace, kubernetes.ApiServerPodName)
 		if err != nil {
 			logger.Log.Errorf("Failed to found mizu service %v", err)
 			cancel()
@@ -38,7 +39,7 @@ func runMizuView() {
 			return
 		}
 
-		url = GetApiServerUrl()
+		url = GetApiServerUrl(config.Config.View.GuiPort)
 
 		response, err := http.Get(fmt.Sprintf("%s/", url))
 		if err == nil && response.StatusCode == 200 {
@@ -46,8 +47,7 @@ func runMizuView() {
 			return
 		}
 		logger.Log.Infof("Establishing connection to k8s cluster...")
-		go startProxyReportErrorIfAny(kubernetesProvider, cancel)
-
+		startProxyReportErrorIfAny(kubernetesProvider, ctx, cancel, config.Config.View.GuiPort)
 	}
 
 	apiServerProvider := apiserver.NewProvider(url, apiserver.DefaultRetries, apiserver.DefaultTimeout)
@@ -62,14 +62,5 @@ func runMizuView() {
 		uiUtils.OpenBrowser(url)
 	}
 
-	if isCompatible, err := version.CheckVersionCompatibility(apiServerProvider); err != nil {
-		logger.Log.Errorf("Failed to check versions compatibility %v", err)
-		cancel()
-		return
-	} else if !isCompatible {
-		cancel()
-		return
-	}
-
-	waitForFinish(ctx, cancel)
+	utils.WaitForFinish(ctx, cancel)
 }

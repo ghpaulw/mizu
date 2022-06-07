@@ -3,7 +3,7 @@
 // license that can be found in the LICENSE file.
 // Source code and contact info at http://github.com/streadway/amqp
 
-package main
+package amqp
 
 import (
 	"bytes"
@@ -135,26 +135,12 @@ func readDecimal(r io.Reader) (v Decimal, err error) {
 	return
 }
 
-func readFloat32(r io.Reader) (v float32, err error) {
-	if err = binary.Read(r, binary.BigEndian, &v); err != nil {
-		return
-	}
-	return
-}
-
-func readFloat64(r io.Reader) (v float64, err error) {
-	if err = binary.Read(r, binary.BigEndian, &v); err != nil {
-		return
-	}
-	return
-}
-
 func readTimestamp(r io.Reader) (v time.Time, err error) {
 	var sec int64
 	if err = binary.Read(r, binary.BigEndian, &sec); err != nil {
 		return
 	}
-	return time.Unix(sec, 0), nil
+	return time.Unix(sec, 0).UTC(), nil
 }
 
 /*

@@ -4,18 +4,16 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
-	"github.com/up9inc/mizu/shared/kubernetes"
+	"github.com/up9inc/mizu/cli/utils"
 
 	"github.com/up9inc/mizu/cli/config"
+	"github.com/up9inc/mizu/logger"
 	"github.com/up9inc/mizu/shared"
-	"github.com/up9inc/mizu/shared/logger"
 	core "k8s.io/api/core/v1"
 )
 
@@ -25,8 +23,8 @@ type Provider struct {
 	client  *http.Client
 }
 
-const DefaultRetries = 20
-const DefaultTimeout = 5 * time.Second
+const DefaultRetries = 3
+const DefaultTimeout = 2 * time.Second
 
 func NewProvider(url string, retries int, timeout time.Duration) *Provider {
 	return &Provider{
@@ -41,7 +39,7 @@ func NewProvider(url string, retries int, timeout time.Duration) *Provider {
 func (provider *Provider) TestConnection() error {
 	retriesLeft := provider.retries
 	for retriesLeft > 0 {
-		if _, err := provider.GetHealthStatus(); err != nil {
+		if isReachable, err := provider.isReachable(); err != nil || !isReachable {
 			logger.Log.Debugf("api server not ready yet %v", err)
 		} else {
 			logger.Log.Debugf("connection test to api server passed successfully")
@@ -57,27 +55,12 @@ func (provider *Provider) TestConnection() error {
 	return nil
 }
 
-func (provider *Provider) GetHealthStatus() (*shared.HealthResponse, error) {
-	healthUrl := fmt.Sprintf("%s/status/health", provider.url)
-	if response, err := provider.client.Get(healthUrl); err != nil {
-		return nil, err
-	} else if response.StatusCode > 299 {
-		responseBody := new(strings.Builder)
-
-		if _, err := io.Copy(responseBody, response.Body); err != nil {
-			return nil, fmt.Errorf("status code: %d - (bad response - %v)", response.StatusCode, err)
-		} else {
-			singleLineResponse := strings.ReplaceAll(responseBody.String(), "\n", "")
-			return nil, fmt.Errorf("status code: %d - (response - %v)", response.StatusCode, singleLineResponse)
-		}
+func (provider *Provider) isReachable() (bool, error) {
+	echoUrl := fmt.Sprintf("%s/echo", provider.url)
+	if _, err := utils.Get(echoUrl, provider.client); err != nil {
+		return false, err
 	} else {
-		defer response.Body.Close()
-
-		healthResponse := &shared.HealthResponse{}
-		if err := json.NewDecoder(response.Body).Decode(&healthResponse); err != nil {
-			return nil, err
-		}
-		return healthResponse, nil
+		return true, nil
 	}
 }
 
@@ -87,10 +70,8 @@ func (provider *Provider) ReportTapperStatus(tapperStatus shared.TapperStatus) e
 	if jsonValue, err := json.Marshal(tapperStatus); err != nil {
 		return fmt.Errorf("failed Marshal the tapper status %w", err)
 	} else {
-		if response, err := provider.client.Post(tapperStatusUrl, "application/json", bytes.NewBuffer(jsonValue)); err != nil {
+		if _, err := utils.Post(tapperStatusUrl, "application/json", bytes.NewBuffer(jsonValue), provider.client); err != nil {
 			return fmt.Errorf("failed sending to API server the tapped pods %w", err)
-		} else if response.StatusCode != 200 {
-			return fmt.Errorf("failed sending to API server the tapper status, response status code %v", response.StatusCode)
 		} else {
 			logger.Log.Debugf("Reported to server API about tapper status: %v", tapperStatus)
 			return nil
@@ -101,18 +82,13 @@ func (provider *Provider) ReportTapperStatus(tapperStatus shared.TapperStatus) e
 func (provider *Provider) ReportTappedPods(pods []core.Pod) error {
 	tappedPodsUrl := fmt.Sprintf("%s/status/tappedPods", provider.url)
 
-	podInfos := kubernetes.GetPodInfosForPods(pods)
-	tapStatus := shared.TapStatus{Pods: podInfos}
-
-	if jsonValue, err := json.Marshal(tapStatus); err != nil {
+	if jsonValue, err := json.Marshal(pods); err != nil {
 		return fmt.Errorf("failed Marshal the tapped pods %w", err)
 	} else {
-		if response, err := provider.client.Post(tappedPodsUrl, "application/json", bytes.NewBuffer(jsonValue)); err != nil {
+		if _, err := utils.Post(tappedPodsUrl, "application/json", bytes.NewBuffer(jsonValue), provider.client); err != nil {
 			return fmt.Errorf("failed sending to API server the tapped pods %w", err)
-		} else if response.StatusCode != 200 {
-			return fmt.Errorf("failed sending to API server the tapped pods, response status code %v", response.StatusCode)
 		} else {
-			logger.Log.Debugf("Reported to server API about %d taped pods successfully", len(podInfos))
+			logger.Log.Debugf("Reported to server API about %d taped pods successfully", len(pods))
 			return nil
 		}
 	}
@@ -121,11 +97,9 @@ func (provider *Provider) ReportTappedPods(pods []core.Pod) error {
 func (provider *Provider) GetGeneralStats() (map[string]interface{}, error) {
 	generalStatsUrl := fmt.Sprintf("%s/status/general", provider.url)
 
-	response, requestErr := provider.client.Get(generalStatsUrl)
+	response, requestErr := utils.Get(generalStatsUrl, provider.client)
 	if requestErr != nil {
 		return nil, fmt.Errorf("failed to get general stats for telemetry, err: %w", requestErr)
-	} else if response.StatusCode != 200 {
-		return nil, fmt.Errorf("failed to get general stats for telemetry, status code: %v", response.StatusCode)
 	}
 
 	defer response.Body.Close()
@@ -148,7 +122,7 @@ func (provider *Provider) GetVersion() (string, error) {
 		Method: http.MethodGet,
 		URL:    versionUrl,
 	}
-	statusResp, err := provider.client.Do(req)
+	statusResp, err := utils.Do(req, provider.client)
 	if err != nil {
 		return "", err
 	}
@@ -159,5 +133,5 @@ func (provider *Provider) GetVersion() (string, error) {
 		return "", err
 	}
 
-	return versionResponse.SemVer, nil
+	return versionResponse.Ver, nil
 }

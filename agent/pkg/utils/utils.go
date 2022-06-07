@@ -2,19 +2,23 @@ package utils
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
-	"mizuserver/pkg/providers"
+	"io/ioutil"
 	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/up9inc/mizu/logger"
 	"github.com/up9inc/mizu/shared"
-	"github.com/up9inc/mizu/shared/logger"
+)
+
+var (
+	StartTime int64 // global
 )
 
 // StartServer starts the server with a graceful shutdown
@@ -31,10 +35,14 @@ func StartServer(app *gin.Engine) {
 	}
 
 	go func() {
-		_ = <-signals
+		<-signals
 		logger.Log.Infof("Shutting down...")
-		ctx, _ := context.WithTimeout(context.Background(), 5*time.Second)
-		_ = srv.Shutdown(ctx)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		err := srv.Shutdown(ctx)
+		if err != nil {
+			logger.Log.Errorf("%v", err)
+		}
 		os.Exit(0)
 	}()
 
@@ -43,15 +51,6 @@ func StartServer(app *gin.Engine) {
 	if err := app.Run(fmt.Sprintf(":%d", shared.DefaultApiServerPort)); err != nil {
 		logger.Log.Errorf("Server is not running! Reason: %v", err)
 	}
-}
-
-func GetTappedPodsStatus() []shared.TappedPodStatus {
-	tappedPodsStatus := make([]shared.TappedPodStatus, 0)
-	for _, pod := range providers.TapStatus.Pods {
-		isTapped := strings.ToLower(providers.TappersStatus[pod.NodeName].Status) == "started"
-		tappedPodsStatus = append(tappedPodsStatus, shared.TappedPodStatus{Name: pod.Name, Namespace: pod.Namespace, IsTapped: isTapped})
-	}
-	return tappedPodsStatus
 }
 
 func CheckErr(e error) {
@@ -69,4 +68,43 @@ func SetHostname(address, newHostname string) string {
 	replacedUrl.Host = newHostname
 	return replacedUrl.String()
 
+}
+
+func ReadJsonFile(filePath string, value interface{}) error {
+	if content, err := ioutil.ReadFile(filePath); err != nil {
+		return err
+	} else {
+		if err = json.Unmarshal(content, value); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func SaveJsonFile(filePath string, value interface{}) error {
+	if data, err := json.Marshal(value); err != nil {
+		return err
+	} else {
+		if err = ioutil.WriteFile(filePath, data, 0644); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func UniqueStringSlice(s []string) []string {
+	uniqueSlice := make([]string, 0)
+	uniqueMap := map[string]bool{}
+
+	for _, val := range s {
+		if uniqueMap[val] {
+			continue
+		}
+		uniqueMap[val] = true
+		uniqueSlice = append(uniqueSlice, val)
+	}
+
+	return uniqueSlice
 }

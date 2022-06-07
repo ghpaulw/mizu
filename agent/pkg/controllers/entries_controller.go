@@ -1,32 +1,22 @@
 package controllers
 
 import (
-	"encoding/json"
-	"mizuserver/pkg/models"
-	"mizuserver/pkg/utils"
-	"mizuserver/pkg/validation"
 	"net/http"
-	"strconv"
-	"time"
+
+	"github.com/up9inc/mizu/agent/pkg/dependency"
+	"github.com/up9inc/mizu/agent/pkg/entries"
+	"github.com/up9inc/mizu/agent/pkg/models"
+	"github.com/up9inc/mizu/agent/pkg/validation"
 
 	"github.com/gin-gonic/gin"
 
-	basenine "github.com/up9inc/basenine/client/go"
-	"github.com/up9inc/mizu/shared"
-	"github.com/up9inc/mizu/shared/logger"
-	tapApi "github.com/up9inc/mizu/tap/api"
+	"github.com/up9inc/mizu/logger"
 )
 
-var extensionsMap map[string]*tapApi.Extension // global
-
-func InitExtensionsMap(ref map[string]*tapApi.Extension) {
-	extensionsMap = ref
-}
-
-func Error(c *gin.Context, err error) bool {
+func HandleEntriesError(c *gin.Context, err error) bool {
 	if err != nil {
 		logger.Log.Errorf("Error getting entry: %v", err)
-		c.Error(err)
+		_ = c.Error(err)
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
 			"error":     true,
 			"type":      "error",
@@ -53,84 +43,37 @@ func GetEntries(c *gin.Context) {
 		entriesRequest.TimeoutMs = 3000
 	}
 
-	data, meta, err := basenine.Fetch(shared.BasenineHost, shared.BaseninePort,
-		entriesRequest.LeftOff, entriesRequest.Direction, entriesRequest.Query,
-		entriesRequest.Limit, time.Duration(entriesRequest.TimeoutMs)*time.Millisecond)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, validationError)
-	}
-
-	response := &models.EntriesResponse{}
-	var dataSlice []interface{}
-
-	for _, row := range data {
-		var dataMap map[string]interface{}
-		err = json.Unmarshal(row, &dataMap)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error":     true,
-				"type":      "error",
-				"autoClose": "5000",
-				"msg":       string(row),
-			})
-			return // exit
+	entriesProvider := dependency.GetInstance(dependency.EntriesProvider).(entries.EntriesProvider)
+	entries, metadata, err := entriesProvider.GetEntries(entriesRequest)
+	if !HandleEntriesError(c, err) {
+		baseEntries := make([]interface{}, 0)
+		for _, entry := range entries {
+			baseEntries = append(baseEntries, entry.Base)
 		}
-
-		base := dataMap["base"].(map[string]interface{})
-		base["id"] = uint(dataMap["id"].(float64))
-
-		dataSlice = append(dataSlice, base)
+		c.JSON(http.StatusOK, models.EntriesResponse{
+			Data: baseEntries,
+			Meta: metadata,
+		})
 	}
-
-	var metadata *basenine.Metadata
-	err = json.Unmarshal(meta, &metadata)
-	if err != nil {
-		logger.Log.Debugf("Error recieving metadata: %v", err.Error())
-	}
-
-	response.Data = dataSlice
-	response.Meta = metadata
-
-	c.JSON(http.StatusOK, response)
 }
 
 func GetEntry(c *gin.Context) {
-	id, _ := strconv.Atoi(c.Param("id"))
-	var entry tapApi.MizuEntry
-	bytes, err := basenine.Single(shared.BasenineHost, shared.BaseninePort, id)
-	if Error(c, err) {
-		return // exit
+	singleEntryRequest := &models.SingleEntryRequest{}
+
+	if err := c.BindQuery(singleEntryRequest); err != nil {
+		c.JSON(http.StatusBadRequest, err)
 	}
-	err = json.Unmarshal(bytes, &entry)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"error":     true,
-			"type":      "error",
-			"autoClose": "5000",
-			"msg":       string(bytes),
-		})
-		return // exit
+	validationError := validation.Validate(singleEntryRequest)
+	if validationError != nil {
+		c.JSON(http.StatusBadRequest, validationError)
 	}
 
-	extension := extensionsMap[entry.Protocol.Name]
-	representation, bodySize, _ := extension.Dissector.Represent(entry.Request, entry.Response)
+	id := c.Param("id")
 
-	var rules []map[string]interface{}
-	var isRulesEnabled bool
-	if entry.Protocol.Name == "http" {
-		harEntry, _ := utils.NewEntry(entry.Request, entry.Response, entry.StartTime, entry.ElapsedTime)
-		_, rulesMatched, _isRulesEnabled := models.RunValidationRulesState(*harEntry, entry.Destination.Name)
-		isRulesEnabled = _isRulesEnabled
-		inrec, _ := json.Marshal(rulesMatched)
-		json.Unmarshal(inrec, &rules)
+	entriesProvider := dependency.GetInstance(dependency.EntriesProvider).(entries.EntriesProvider)
+	entry, err := entriesProvider.GetEntry(singleEntryRequest, id)
+
+	if !HandleEntriesError(c, err) {
+		c.JSON(http.StatusOK, entry)
 	}
-
-	c.JSON(http.StatusOK, tapApi.MizuEntryWrapper{
-		Protocol:       entry.Protocol,
-		Representation: string(representation),
-		BodySize:       bodySize,
-		Data:           entry,
-		Rules:          rules,
-		IsRulesEnabled: isRulesEnabled,
-	})
 }

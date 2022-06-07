@@ -1,26 +1,28 @@
 package shared
 
 import (
-	"github.com/op/go-logging"
-	"github.com/up9inc/mizu/shared/logger"
-	"github.com/up9inc/mizu/tap/api"
 	"io/ioutil"
 	"strings"
 
+	"github.com/op/go-logging"
+	"github.com/up9inc/mizu/logger"
+
 	"gopkg.in/yaml.v3"
+	v1 "k8s.io/api/core/v1"
 )
 
 type WebSocketMessageType string
 
 const (
-	WebSocketMessageTypeEntry         WebSocketMessageType = "entry"
-	WebSocketMessageTypeTappedEntry   WebSocketMessageType = "tappedEntry"
-	WebSocketMessageTypeUpdateStatus  WebSocketMessageType = "status"
-	WebSocketMessageTypeAnalyzeStatus WebSocketMessageType = "analyzeStatus"
-	WebsocketMessageTypeOutboundLink  WebSocketMessageType = "outboundLink"
-	WebSocketMessageTypeToast         WebSocketMessageType = "toast"
-	WebSocketMessageTypeQueryMetadata WebSocketMessageType = "queryMetadata"
-	WebSocketMessageTypeStartTime     WebSocketMessageType = "startTime"
+	WebSocketMessageTypeEntry            WebSocketMessageType = "entry"
+	WebSocketMessageTypeFullEntry        WebSocketMessageType = "fullEntry"
+	WebSocketMessageTypeTappedEntry      WebSocketMessageType = "tappedEntry"
+	WebSocketMessageTypeUpdateStatus     WebSocketMessageType = "status"
+	WebSocketMessageTypeUpdateTappedPods WebSocketMessageType = "tappedPods"
+	WebSocketMessageTypeToast            WebSocketMessageType = "toast"
+	WebSocketMessageTypeQueryMetadata    WebSocketMessageType = "queryMetadata"
+	WebSocketMessageTypeStartTime        WebSocketMessageType = "startTime"
+	WebSocketMessageTypeTapConfig        WebSocketMessageType = "tapConfig"
 )
 
 type Resources struct {
@@ -31,40 +33,50 @@ type Resources struct {
 }
 
 type MizuAgentConfig struct {
-	TapTargetRegex          api.SerializableRegexp      `json:"tapTargetRegex"`
-	MaxDBSizeBytes          int64                       `json:"maxDBSizeBytes"`
-	DaemonMode              bool                        `json:"daemonMode"`
-	TargetNamespaces        []string                    `json:"targetNamespaces"`
-	AgentImage              string                      `json:"agentImage"`
-	PullPolicy              string                      `json:"pullPolicy"`
-	LogLevel                logging.Level               `json:"logLevel"`
-	IgnoredUserAgents       []string                    `json:"ignoredUserAgents"`
-	TapperResources         Resources                   `json:"tapperResources"`
-	MizuResourcesNamespace  string                      `json:"mizuResourceNamespace"`
-	MizuApiFilteringOptions api.TrafficFilteringOptions `json:"mizuApiFilteringOptions"`
-	AgentDatabasePath       string                      `json:"agentDatabasePath"`
-	Istio                   bool                        `json:"istio"`
+	MaxDBSizeBytes         int64         `json:"maxDBSizeBytes"`
+	InsertionFilter        string        `json:"insertionFilter"`
+	AgentImage             string        `json:"agentImage"`
+	PullPolicy             string        `json:"pullPolicy"`
+	LogLevel               logging.Level `json:"logLevel"`
+	TapperResources        Resources     `json:"tapperResources"`
+	MizuResourcesNamespace string        `json:"mizuResourceNamespace"`
+	AgentDatabasePath      string        `json:"agentDatabasePath"`
+	ServiceMap             bool          `json:"serviceMap"`
+	OAS                    bool          `json:"oas"`
+	Telemetry              bool          `json:"telemetry"`
 }
 
 type WebSocketMessageMetadata struct {
 	MessageType WebSocketMessageType `json:"messageType,omitempty"`
 }
 
-type WebSocketAnalyzeStatusMessage struct {
-	*WebSocketMessageMetadata
-	AnalyzeStatus AnalyzeStatus `json:"analyzeStatus"`
-}
-
-type AnalyzeStatus struct {
-	IsAnalyzing   bool   `json:"isAnalyzing"`
-	RemoteUrl     string `json:"remoteUrl"`
-	IsRemoteReady bool   `json:"isRemoteReady"`
-	SentCount     int    `json:"sentCount"`
-}
 
 type WebSocketStatusMessage struct {
 	*WebSocketMessageMetadata
 	TappingStatus []TappedPodStatus `json:"tappingStatus"`
+}
+
+type WebSocketTappedPodsMessage struct {
+	*WebSocketMessageMetadata
+	NodeToTappedPodMap NodeToPodsMap `json:"nodeToTappedPodMap"`
+}
+
+type WebSocketTapConfigMessage struct {
+	*WebSocketMessageMetadata
+	TapTargets []v1.Pod `json:"pods"`
+}
+
+type NodeToPodsMap map[string][]v1.Pod
+
+func (np NodeToPodsMap) Summary() map[string][]string {
+	summary := make(map[string][]string)
+	for node, pods := range np {
+		for _, pod := range pods {
+			summary[node] = append(summary[node], pod.Namespace+"/"+pod.Name)
+		}
+	}
+
+	return summary
 }
 
 type TapperStatus struct {
@@ -77,10 +89,6 @@ type TappedPodStatus struct {
 	Name      string `json:"name"`
 	Namespace string `json:"namespace"`
 	IsTapped  bool   `json:"isTapped"`
-}
-
-type TapStatus struct {
-	Pods []PodInfo `json:"pods"`
 }
 
 type PodInfo struct {
@@ -96,13 +104,6 @@ type TLSLinkInfo struct {
 	ResolvedSourceName      string `json:"resolvedSourceName"`
 }
 
-type SyncEntriesConfig struct {
-	Token             string `json:"token"`
-	Env               string `json:"env"`
-	Workspace         string `json:"workspace"`
-	UploadIntervalSec int    `json:"interval"`
-}
-
 func CreateWebSocketStatusMessage(tappedPodsStatus []TappedPodStatus) WebSocketStatusMessage {
 	return WebSocketStatusMessage{
 		WebSocketMessageMetadata: &WebSocketMessageMetadata{
@@ -112,23 +113,23 @@ func CreateWebSocketStatusMessage(tappedPodsStatus []TappedPodStatus) WebSocketS
 	}
 }
 
-func CreateWebSocketMessageTypeAnalyzeStatus(analyzeStatus AnalyzeStatus) WebSocketAnalyzeStatusMessage {
-	return WebSocketAnalyzeStatusMessage{
+func CreateWebSocketTappedPodsMessage(nodeToTappedPodMap NodeToPodsMap) WebSocketTappedPodsMessage {
+	return WebSocketTappedPodsMessage{
 		WebSocketMessageMetadata: &WebSocketMessageMetadata{
-			MessageType: WebSocketMessageTypeAnalyzeStatus,
+			MessageType: WebSocketMessageTypeUpdateTappedPods,
 		},
-		AnalyzeStatus: analyzeStatus,
+		NodeToTappedPodMap: nodeToTappedPodMap,
 	}
 }
 
 type HealthResponse struct {
-	TapStatus     TapStatus      `json:"tapStatus"`
-	TappersCount  int            `json:"tappersCount"`
-	TappersStatus []TapperStatus `json:"tappersStatus"`
+	TappedPods            []*PodInfo      `json:"tappedPods"`
+	ConnectedTappersCount int             `json:"connectedTappersCount"`
+	TappersStatus         []*TapperStatus `json:"tappersStatus"`
 }
 
 type VersionResponse struct {
-	SemVer string `json:"semver"`
+	Ver string `json:"ver"`
 }
 
 type RulesPolicy struct {

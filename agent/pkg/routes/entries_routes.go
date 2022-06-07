@@ -1,9 +1,8 @@
 package routes
 
 import (
-	"mizuserver/pkg/controllers"
-
 	"github.com/gin-gonic/gin"
+	"github.com/up9inc/mizu/agent/pkg/controllers"
 )
 
 // EntriesRoutes defines the group of har entries routes.

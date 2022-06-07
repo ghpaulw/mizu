@@ -2,7 +2,7 @@ package routes
 
 import (
 	"github.com/gin-gonic/gin"
-	"mizuserver/pkg/controllers"
+	"github.com/up9inc/mizu/agent/pkg/controllers"
 )
 
 func StatusRoutes(ginApp *gin.Engine) {
@@ -12,16 +12,10 @@ func StatusRoutes(ginApp *gin.Engine) {
 
 	routeGroup.POST("/tappedPods", controllers.PostTappedPods)
 	routeGroup.POST("/tapperStatus", controllers.PostTapperStatus)
-	routeGroup.GET("/tappersCount", controllers.GetTappersCount)
+	routeGroup.GET("/connectedTappersCount", controllers.GetConnectedTappersCount)
 	routeGroup.GET("/tap", controllers.GetTappingStatus)
 
-	routeGroup.GET("/auth", controllers.GetAuthStatus)
-
-	routeGroup.GET("/analyze", controllers.AnalyzeInformation)
-
 	routeGroup.GET("/general", controllers.GetGeneralStats) // get general stats about entries in DB
-
-	routeGroup.GET("/recentTLSLinks", controllers.GetRecentTLSLinks)
 
 	routeGroup.GET("/resolving", controllers.GetCurrentResolvingInformation)
 }

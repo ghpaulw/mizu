@@ -10,8 +10,9 @@ import (
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/reassembly"
-	"github.com/up9inc/mizu/shared/logger"
+	"github.com/up9inc/mizu/logger"
 	"github.com/up9inc/mizu/tap/api"
+	"github.com/up9inc/mizu/tap/dbgctl"
 	"github.com/up9inc/mizu/tap/diagnose"
 	"github.com/up9inc/mizu/tap/source"
 )
@@ -23,19 +24,21 @@ type tcpAssembler struct {
 	streamPool     *reassembly.StreamPool
 	streamFactory  *tcpStreamFactory
 	assemblerMutex sync.Mutex
+	ignoredPorts   []uint16
 }
 
 // Context
 // The assembler context
 type context struct {
 	CaptureInfo gopacket.CaptureInfo
+	Origin      api.Capture
 }
 
 func (c *context) GetCaptureInfo() gopacket.CaptureInfo {
 	return c.CaptureInfo
 }
 
-func NewTcpAssembler(outputItems chan *api.OutputChannelItem, streamsMap *tcpStreamMap, opts *TapOpts) *tcpAssembler {
+func NewTcpAssembler(outputItems chan *api.OutputChannelItem, streamsMap api.TcpStreamMap, opts *TapOpts) *tcpAssembler {
 	var emitter api.Emitter = &api.Emitting{
 		AppStats:      &diagnose.AppStats,
 		OutputChannel: outputItems,
@@ -47,8 +50,8 @@ func NewTcpAssembler(outputItems chan *api.OutputChannelItem, streamsMap *tcpStr
 
 	maxBufferedPagesTotal := GetMaxBufferedPagesPerConnection()
 	maxBufferedPagesPerConnection := GetMaxBufferedPagesTotal()
-	logger.Log.Infof("Assembler options: maxBufferedPagesTotal=%d, maxBufferedPagesPerConnection=%d",
-		maxBufferedPagesTotal, maxBufferedPagesPerConnection)
+	logger.Log.Infof("Assembler options: maxBufferedPagesTotal=%d, maxBufferedPagesPerConnection=%d, opts=%v",
+		maxBufferedPagesTotal, maxBufferedPagesPerConnection, opts)
 	assembler.AssemblerOptions.MaxBufferedPagesTotal = maxBufferedPagesTotal
 	assembler.AssemblerOptions.MaxBufferedPagesPerConnection = maxBufferedPagesPerConnection
 
@@ -56,6 +59,7 @@ func NewTcpAssembler(outputItems chan *api.OutputChannelItem, streamsMap *tcpStr
 		Assembler:     assembler,
 		streamPool:    streamPool,
 		streamFactory: streamFactory,
+		ignoredPorts:  opts.IgnoredPorts,
 	}
 }
 
@@ -65,11 +69,11 @@ func (a *tcpAssembler) processPackets(dumpPacket bool, packets <-chan source.Tcp
 
 	for packetInfo := range packets {
 		packetsCount := diagnose.AppStats.IncPacketsCount()
-		
-		if packetsCount % PACKETS_SEEN_LOG_THRESHOLD == 0 {
+
+		if packetsCount%PACKETS_SEEN_LOG_THRESHOLD == 0 {
 			logger.Log.Debugf("Packets seen: #%d", packetsCount)
 		}
-		
+
 		packet := packetInfo.Packet
 		data := packet.Data()
 		diagnose.AppStats.UpdateProcessedBytes(uint64(len(data)))
@@ -81,20 +85,21 @@ func (a *tcpAssembler) processPackets(dumpPacket bool, packets <-chan source.Tcp
 		if tcp != nil {
 			diagnose.AppStats.IncTcpPacketsCount()
 			tcp := tcp.(*layers.TCP)
-			if *checksum {
-				err := tcp.SetNetworkLayerForChecksum(packet.NetworkLayer())
-				if err != nil {
-					logger.Log.Fatalf("Failed to set network layer for checksum: %s", err)
+
+			if a.shouldIgnorePort(uint16(tcp.DstPort)) {
+				diagnose.AppStats.IncIgnoredPacketsCount()
+			} else {
+				c := context{
+					CaptureInfo: packet.Metadata().CaptureInfo,
+					Origin:      packetInfo.Source.Origin,
+				}
+				diagnose.InternalStats.Totalsz += len(tcp.Payload)
+				if !dbgctl.MizuTapperDisableTcpReassembly {
+					a.assemblerMutex.Lock()
+					a.AssembleWithContext(packet.NetworkLayer().NetworkFlow(), tcp, &c)
+					a.assemblerMutex.Unlock()
 				}
 			}
-			c := context{
-				CaptureInfo: packet.Metadata().CaptureInfo,
-			}
-			diagnose.InternalStats.Totalsz += len(tcp.Payload)
-			logger.Log.Debugf("%s:%v -> %s:%v", packet.NetworkLayer().NetworkFlow().Src(), tcp.SrcPort, packet.NetworkLayer().NetworkFlow().Dst(), tcp.DstPort)
-			a.assemblerMutex.Lock()
-			a.AssembleWithContext(packet.NetworkLayer().NetworkFlow(), tcp, &c)
-			a.assemblerMutex.Unlock()
 		}
 
 		done := *maxcount > 0 && int64(diagnose.AppStats.PacketsCount) >= *maxcount
@@ -135,4 +140,14 @@ func (a *tcpAssembler) waitAndDump() {
 	a.assemblerMutex.Lock()
 	logger.Log.Debugf("%s", a.Dump())
 	a.assemblerMutex.Unlock()
+}
+
+func (a *tcpAssembler) shouldIgnorePort(port uint16) bool {
+	for _, p := range a.ignoredPorts {
+		if port == p {
+			return true
+		}
+	}
+
+	return false
 }

@@ -1,8 +1,9 @@
-package main
+package amqp
 
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 	"time"
 
@@ -24,14 +25,14 @@ var connectionMethodMap = map[int]string{
 	61: "connection unblocked",
 }
 
-var channelMethodMap = map[int]string{
-	10: "channel open",
-	11: "channel open-ok",
-	20: "channel flow",
-	21: "channel flow-ok",
-	40: "channel close",
-	41: "channel close-ok",
-}
+// var channelMethodMap = map[int]string{
+// 	10: "channel open",
+// 	11: "channel open-ok",
+// 	20: "channel flow",
+// 	21: "channel flow-ok",
+// 	40: "channel close",
+// 	41: "channel close-ok",
+// }
 
 var exchangeMethodMap = map[int]string{
 	10: "exchange declare",
@@ -78,14 +79,14 @@ var basicMethodMap = map[int]string{
 	120: "basic nack",
 }
 
-var txMethodMap = map[int]string{
-	10: "tx select",
-	11: "tx select-ok",
-	20: "tx commit",
-	21: "tx commit-ok",
-	30: "tx rollback",
-	31: "tx rollback-ok",
-}
+// var txMethodMap = map[int]string{
+// 	10: "tx select",
+// 	11: "tx select-ok",
+// 	20: "tx commit",
+// 	21: "tx commit-ok",
+// 	30: "tx rollback",
+// 	31: "tx rollback-ok",
+// }
 
 type AMQPWrapper struct {
 	Method  string      `json:"method"`
@@ -93,7 +94,7 @@ type AMQPWrapper struct {
 	Details interface{} `json:"details"`
 }
 
-func emitAMQP(event interface{}, _type string, method string, connectionInfo *api.ConnectionInfo, captureTime time.Time, emitter api.Emitter) {
+func emitAMQP(event interface{}, _type string, method string, connectionInfo *api.ConnectionInfo, captureTime time.Time, captureSize int, emitter api.Emitter, capture api.Capture) {
 	request := &api.GenericMessage{
 		IsRequest:   true,
 		CaptureTime: captureTime,
@@ -107,6 +108,7 @@ func emitAMQP(event interface{}, _type string, method string, connectionInfo *ap
 	}
 	item := &api.OutputChannelItem{
 		Protocol:       protocol,
+		Capture:        capture,
 		Timestamp:      captureTime.UnixNano() / int64(time.Millisecond),
 		ConnectionInfo: connectionInfo,
 		Pair: &api.RequestResponsePair{
@@ -282,6 +284,9 @@ func representBasicPublish(event map[string]interface{}) []interface{} {
 				Selector: fmt.Sprintf(`request.properties.headers["%s"]`, name),
 			})
 		}
+		sort.Slice(headers, func(i, j int) bool {
+			return headers[i].Name < headers[j].Name
+		})
 		headersMarshaled, _ := json.Marshal(headers)
 		rep = append(rep, api.SectionData{
 			Type:  api.TABLE,
@@ -362,10 +367,13 @@ func representBasicDeliver(event map[string]interface{}) []interface{} {
 		for name, value := range properties["headers"].(map[string]interface{}) {
 			headers = append(headers, api.TableData{
 				Name:     name,
-				Value:    value.(string),
+				Value:    value,
 				Selector: fmt.Sprintf(`request.properties.headers["%s"]`, name),
 			})
 		}
+		sort.Slice(headers, func(i, j int) bool {
+			return headers[i].Name < headers[j].Name
+		})
 		headersMarshaled, _ := json.Marshal(headers)
 		rep = append(rep, api.SectionData{
 			Type:  api.TABLE,
@@ -438,6 +446,9 @@ func representQueueDeclare(event map[string]interface{}) []interface{} {
 				Selector: fmt.Sprintf(`request.arguments["%s"]`, name),
 			})
 		}
+		sort.Slice(headers, func(i, j int) bool {
+			return headers[i].Name < headers[j].Name
+		})
 		headersMarshaled, _ := json.Marshal(headers)
 		rep = append(rep, api.SectionData{
 			Type:  api.TABLE,
@@ -504,6 +515,9 @@ func representExchangeDeclare(event map[string]interface{}) []interface{} {
 				Selector: fmt.Sprintf(`request.arguments["%s"]`, name),
 			})
 		}
+		sort.Slice(headers, func(i, j int) bool {
+			return headers[i].Name < headers[j].Name
+		})
 		headersMarshaled, _ := json.Marshal(headers)
 		rep = append(rep, api.SectionData{
 			Type:  api.TABLE,
@@ -550,14 +564,12 @@ func representConnectionStart(event map[string]interface{}) []interface{} {
 		headers := make([]api.TableData, 0)
 		for name, value := range event["serverProperties"].(map[string]interface{}) {
 			var outcome string
-			switch value.(type) {
+			switch v := value.(type) {
 			case string:
-				outcome = value.(string)
-				break
+				outcome = v
 			case map[string]interface{}:
 				x, _ := json.Marshal(value)
 				outcome = string(x)
-				break
 			default:
 				panic("Unknown data type for the server property!")
 			}
@@ -567,6 +579,9 @@ func representConnectionStart(event map[string]interface{}) []interface{} {
 				Selector: fmt.Sprintf(`request.serverProperties["%s"]`, name),
 			})
 		}
+		sort.Slice(headers, func(i, j int) bool {
+			return headers[i].Name < headers[j].Name
+		})
 		headersMarshaled, _ := json.Marshal(headers)
 		rep = append(rep, api.SectionData{
 			Type:  api.TABLE,
@@ -658,6 +673,9 @@ func representQueueBind(event map[string]interface{}) []interface{} {
 				Selector: fmt.Sprintf(`request.arguments["%s"]`, name),
 			})
 		}
+		sort.Slice(headers, func(i, j int) bool {
+			return headers[i].Name < headers[j].Name
+		})
 		headersMarshaled, _ := json.Marshal(headers)
 		rep = append(rep, api.SectionData{
 			Type:  api.TABLE,
@@ -719,6 +737,9 @@ func representBasicConsume(event map[string]interface{}) []interface{} {
 				Selector: fmt.Sprintf(`request.arguments["%s"]`, name),
 			})
 		}
+		sort.Slice(headers, func(i, j int) bool {
+			return headers[i].Name < headers[j].Name
+		})
 		headersMarshaled, _ := json.Marshal(headers)
 		rep = append(rep, api.SectionData{
 			Type:  api.TABLE,

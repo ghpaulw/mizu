@@ -1,8 +1,9 @@
 package routes
 
 import (
+	"github.com/up9inc/mizu/agent/pkg/controllers"
+
 	"github.com/gin-gonic/gin"
-	"mizuserver/pkg/controllers"
 )
 
 // MetadataRoutes defines the group of metadata routes.
